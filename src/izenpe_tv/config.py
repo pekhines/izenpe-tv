@@ -18,23 +18,25 @@ ACR_CIUDADANO = (
     "|urn:safelayer:tws:policies:authentication:flow:izmobileid:citizen"
 )
 
+# Order as sent by the official client (global, profile, register)
 SCOPE = (
     "urn:izenpe:identity:global "
-    "urn:safelayer:eidas:sign:identity:register "
-    "urn:safelayer:eidas:sign:identity:profile"
+    "urn:safelayer:eidas:sign:identity:profile "
+    "urn:safelayer:eidas:sign:identity:register"
 )
 
 REDIRECT_URI = "oauth-swift://oauth-callback"
 
-# The official app always appends these three params (added in native code); the
-# authorize request is rejected without them. Values mimic the Windows client v4.0.9
-# (app_version = the exe's ProductVersion resource). Override per-call if needed.
+# The official app always appends these three params. Values captured from the real
+# Windows client v4.0.9 authorize URL (its own log). Override per-call if needed.
 DEFAULT_APP_PARAMS = {
-    "app_version": "4.0.9+400101",
+    "app_version": "4.0.9",
     "app_platform": "windows",
     "app_arch": "x64",
 }
-OAUTH_PROFILE = "vsc2026"  # active profile in the official client (vs "legacy")
+# The official client's OAuth profile name IS its client_id (captured from its log:
+# "client_id=vsc2026"). The id is public; only the secret is kept out of the repo.
+DEFAULT_CLIENT_ID = "vsc2026"
 
 # API resource paths (relative to the environment base URL)
 PATH_AUTHORIZE = "/trustedx-authserver/oauth/izenpe"
@@ -50,81 +52,77 @@ class Environment:
     profile: str  # "profesional" | "ciudadano"
     base_url: str
     acr_values: str
-    # id/secret candidates; resolved (and persisted) at first successful login
     client_id: str
     client_secret: str
 
 
-# The embedded OAuth client credentials (client_id / client_secret) are NOT hardcoded
-# here. They live in the official desktop app's binary; extract them and put them in
-# ~/.config/izenpe-tv/client.toml (or set env vars). See docs/PROTOCOL.md §2 and
-# `load_client_credentials()` below. This keeps secrets out of version control.
-_CLIENT_ID_CANDIDATES: list[str] = []
-_CLIENT_SECRET: dict[str, str] = {"prod": "", "desa": ""}
+# The client_secret is NOT hardcoded here: it lives in the official app's binary.
+# Put candidates in ~/.config/izenpe-tv/client.toml (or env vars); the token exchange
+# tries them in order and remembers the one that works. Keeps secrets out of git.
+_CLIENT_ID = [DEFAULT_CLIENT_ID]
+_SECRET_CANDIDATES: list[str] = []
 
 
 def load_client_credentials() -> None:
-    """Populate client_id candidates and secrets from env or ~/.config/izenpe-tv/client.toml.
+    """Load client_id and client_secret candidates.
 
-    Env vars: IZENPE_TV_CLIENT_IDS (comma-separated), IZENPE_TV_CLIENT_SECRET_PROD,
-    IZENPE_TV_CLIENT_SECRET_DESA.
-    TOML keys: client_ids = ["..."], client_secret_prod = "...", client_secret_desa = "..."
+    Env: IZENPE_TV_CLIENT_ID, IZENPE_TV_CLIENT_SECRETS (comma-separated).
+    ~/.config/izenpe-tv/client.toml:
+        client_id = "vsc2026"
+        client_secrets = ["...", "..."]
     """
     import os
-    ids = os.environ.get("IZENPE_TV_CLIENT_IDS")
-    sec_prod = os.environ.get("IZENPE_TV_CLIENT_SECRET_PROD")
-    sec_desa = os.environ.get("IZENPE_TV_CLIENT_SECRET_DESA")
+    cid = os.environ.get("IZENPE_TV_CLIENT_ID")
+    secs = os.environ.get("IZENPE_TV_CLIENT_SECRETS")
+    secret_list = [x.strip() for x in secs.split(",") if x.strip()] if secs else []
 
-    if not (ids and sec_prod):
-        path = os.path.join(
-            os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
-            "izenpe-tv", "client.toml",
-        )
-        if os.path.exists(path):
-            try:
-                import tomllib
-                with open(path, "rb") as f:
-                    data = tomllib.load(f)
-                ids = ids or ",".join(data.get("client_ids", []))
-                sec_prod = sec_prod or data.get("client_secret_prod", "")
-                sec_desa = sec_desa or data.get("client_secret_desa", "")
-            except Exception:
-                pass
+    path = os.path.join(
+        os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+        "izenpe-tv", "client.toml",
+    )
+    if os.path.exists(path):
+        try:
+            import tomllib
+            with open(path, "rb") as f:
+                data = tomllib.load(f)
+            cid = cid or data.get("client_id")
+            if not secret_list:
+                secret_list = [str(x) for x in data.get("client_secrets", [])]
+        except Exception:
+            pass
 
-    if ids:
-        _CLIENT_ID_CANDIDATES[:] = [s.strip() for s in ids.split(",") if s.strip()]
-    if sec_prod:
-        _CLIENT_SECRET["prod"] = sec_prod
-    if sec_desa:
-        _CLIENT_SECRET["desa"] = sec_desa
+    if cid:
+        _CLIENT_ID[0] = cid
+    if secret_list:
+        _SECRET_CANDIDATES[:] = secret_list
     _rebuild_environments()
 
 
 def credentials_present() -> bool:
-    return bool(_CLIENT_ID_CANDIDATES and _CLIENT_SECRET.get("prod"))
+    return bool(_CLIENT_ID[0] and _SECRET_CANDIDATES)
 
-# base_url + acr + which secret (prod/desa) per environment; client_id filled at runtime
+
+def client_secret_candidates() -> list[str]:
+    return list(_SECRET_CANDIDATES)
+
+
 _ENV_DEFS = {
-    "profesional":      ("profesional", "https://eidas-prof.izenpe.eus",         ACR_PROFESIONAL, "prod"),
-    "profesional-desa": ("profesional", "https://eidas-profdes.izenpe.eus:8082", ACR_PROFESIONAL, "desa"),
-    "ciudadano":        ("ciudadano",   "https://eidas.izenpe.com",              ACR_CIUDADANO,   "prod"),
-    "ciudadano-desa":   ("ciudadano",   "https://eidasdes.izenpe.com:8082",      ACR_CIUDADANO,   "desa"),
+    "profesional":      ("profesional", "https://eidas-prof.izenpe.eus",         ACR_PROFESIONAL),
+    "profesional-desa": ("profesional", "https://eidas-profdes.izenpe.eus:8082", ACR_PROFESIONAL),
+    "ciudadano":        ("ciudadano",   "https://eidas.izenpe.com",              ACR_CIUDADANO),
+    "ciudadano-desa":   ("ciudadano",   "https://eidasdes.izenpe.com:8082",      ACR_CIUDADANO),
 }
 
 ENVIRONMENTS: dict[str, Environment] = {}
 
 
 def _rebuild_environments() -> None:
-    cid = _CLIENT_ID_CANDIDATES[0] if _CLIENT_ID_CANDIDATES else ""
-    for name, (profile, base, acr, sec) in _ENV_DEFS.items():
+    secret = _SECRET_CANDIDATES[0] if _SECRET_CANDIDATES else ""
+    for name, (profile, base, acr) in _ENV_DEFS.items():
         ENVIRONMENTS[name] = Environment(
             name=name, profile=profile, base_url=base, acr_values=acr,
-            client_id=cid, client_secret=_CLIENT_SECRET.get(sec, ""),
+            client_id=_CLIENT_ID[0], client_secret=secret,
         )
 
 
 _rebuild_environments()
-
-# Exposed as a module-level reference; always read via this name (it is refreshed
-# in-place when credentials load).
-CLIENT_ID_CANDIDATES = _CLIENT_ID_CANDIDATES

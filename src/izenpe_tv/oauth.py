@@ -19,6 +19,7 @@ class Token:
     token_type: str = "Bearer"
     expires_in: int = 0
     obtained_at: float = field(default_factory=time.time)
+    client_secret: str | None = None  # the secret that worked (for refresh)
 
     @property
     def expires_at(self) -> float:
@@ -36,6 +37,7 @@ class Token:
             "token_type": self.token_type,
             "expires_in": self.expires_in,
             "obtained_at": self.obtained_at,
+            "client_secret": self.client_secret,
         }
 
     @classmethod
@@ -46,6 +48,7 @@ class Token:
             token_type=d.get("token_type", "Bearer"),
             expires_in=int(d.get("expires_in", 0) or 0),
             obtained_at=float(d.get("obtained_at", time.time())),
+            client_secret=d.get("client_secret"),
         )
 
 
@@ -119,13 +122,14 @@ def parse_redirect(redirect: str, *, expected_state: str | None = None) -> str:
 
 
 def exchange_code(env: Environment, code: str, *, client_id: str | None = None,
+                  client_secret: str | None = None,
                   session: requests.Session | None = None) -> Token:
     s = session or requests.Session()
     data = {
         "grant_type": "authorization_code",
         "code": code,
         "client_id": client_id or env.client_id,
-        "client_secret": env.client_secret,
+        "client_secret": client_secret or env.client_secret,
         "redirect_uri": config.REDIRECT_URI,
     }
     r = s.post(f"{env.base_url}{config.PATH_TOKEN}", data=data,
@@ -134,19 +138,21 @@ def exchange_code(env: Environment, code: str, *, client_id: str | None = None,
 
 
 def refresh_token(env: Environment, refresh: str, *, client_id: str | None = None,
+                  client_secret: str | None = None,
                   session: requests.Session | None = None) -> Token:
     s = session or requests.Session()
     data = {
         "grant_type": "refresh_token",
         "refresh_token": refresh,
         "client_id": client_id or env.client_id,
-        "client_secret": env.client_secret,
+        "client_secret": client_secret or env.client_secret,
     }
     r = s.post(f"{env.base_url}{config.PATH_TOKEN}", data=data,
                headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=30)
     tok = _token_from_response(r)
     if not tok.refresh_token:
         tok.refresh_token = refresh  # some servers omit it on refresh
+    tok.client_secret = client_secret
     return tok
 
 

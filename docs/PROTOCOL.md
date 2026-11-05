@@ -66,18 +66,28 @@ Response JSON: `{access_token, refresh_token, token_type:"Bearer", expires_in}`.
 
 **Refresh** — `grant_type=refresh_token&refresh_token=...&client_id=...&client_secret=...`.
 
-### Embedded client credentials
+### Client credentials (confirmed)
 
-The app is a *confidential* client with an embedded id/secret (public by nature of a
-desktop app; reused for interoperability). **These are deliberately not stored in this
-repo.** Extract them from the official app and configure them locally (env vars or
-`~/.config/izenpe-tv/client.toml`, see `client.toml.example`).
+Captured from the official app's own log (`izenpe_windows.log`, run under Wine, after
+clicking *Vincular*), the real authorize URL is:
 
-Where to find them in the Windows app `TarjetaVirtual.exe` (Flutter string table): the
-`client_id` candidates and `client_secret` (a PROD and a DESA value) appear next to the
-strings `oauth_profile`, `legacy` and `vsc2026`. `izenpe-tv login` tries each configured
-`client_id` candidate and persists the one the token endpoint accepts. Nothing here is a
-*user* secret.
+```
+https://eidas-prof.izenpe.eus/trustedx-authserver/oauth/izenpe
+  ?client_id=vsc2026&response_type=code&redirect_uri=oauth-swift%3a%2f%2foauth-callback
+  &scope=urn%3Aizenpe%3Aidentity%3Aglobal+urn%3Asafelayer%3Aeidas%3Asign%3Aidentity%3Aprofile
+         +urn%3Asafelayer%3Aeidas%3Asign%3Aidentity%3Aregister
+  &acr_values=urn%3Aizenpe%3Aauthentication%3Aflow%3Abak_otp%7C...izmobileid%3Aprof
+  &state=&ui_locales=es&login_hint=&app_version=4.0.9&app_platform=windows&app_arch=x64
+```
+
+- **client_id = `vsc2026`** (the "OAuth profile" name *is* the client id; the older
+  `legacy` profile uses client `ideable`). A wrong client_id yields the generic
+  `/trustedx-authserver/izenpe/error.xhtml` ("An invalid request was received").
+- The client_secret is embedded in `TarjetaVirtual.exe`; it is **not stored in this repo**.
+  Put candidates in `~/.config/izenpe-tv/client.toml` (see `client.toml.example`); the
+  token exchange tries them in order and remembers the one that works.
+- An external browser cannot follow the final HTTP→`oauth-swift://` redirect, so login
+  must run in an embedded WebView that intercepts it (as the official app does with WebView2).
 
 ## 3. REST API (Bearer access_token)
 

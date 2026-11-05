@@ -28,18 +28,21 @@ DESKTOP_ID = "izenpe-tv-callback.desktop"
 
 def _resolve_client_and_exchange(env: Environment, code: str,
                                  prefer: str | None = None) -> tuple[Token, str]:
-    """Exchange the code, trying each candidate client_id until one works."""
+    """Exchange the code with the authorize client_id, trying each secret candidate.
+
+    The code is bound to the client_id used at /authorize, so only the secret varies.
+    """
+    cid = prefer or env.client_id
     last = None
     s = requests.Session()
-    candidates = ([prefer] if prefer else []) + [c for c in config.CLIENT_ID_CANDIDATES
-                                                 if c != prefer]
-    for cid in candidates:
+    for secret in config.client_secret_candidates():
         try:
-            tok = oauth.exchange_code(env, code, client_id=cid, session=s)
+            tok = oauth.exchange_code(env, code, client_id=cid, client_secret=secret, session=s)
+            tok.client_secret = secret
             return tok, cid
         except oauth.OAuthError as e:
             last = e
-    raise oauth.OAuthError(f"token exchange failed for all client_id candidates: {last}")
+    raise oauth.OAuthError(f"token exchange failed for all client_secret candidates: {last}")
 
 
 def _callback_exe() -> str:
@@ -176,6 +179,6 @@ def ensure_token(env: Environment) -> Token:
     if tok is None:
         raise oauth.OAuthError(f"not logged in for profile {env.profile!r}; run `izenpe-tv login`")
     if tok.is_expired() and tok.refresh_token:
-        tok = oauth.refresh_token(env, tok.refresh_token)
+        tok = oauth.refresh_token(env, tok.refresh_token, client_secret=tok.client_secret)
         storage.save_token(env.profile, tok)
     return tok

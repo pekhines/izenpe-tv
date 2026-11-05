@@ -1,6 +1,5 @@
-# Copy to ~/.config/izenpe-tv/client.toml and fill in the values extracted from the
-# official Izenpe desktop app (TarjetaVirtual.exe). These are the app's embedded OAuth
-# client credentials, not your personal credentials. Keep this file out of version control.
-client_ids = ["<candidate1>", "<candidate2>"]
-client_secret_prod = "<prod secret>"
-client_secret_desa = "<desa secret>"
+# Copy to ~/.config/izenpe-tv/client.toml. client_id is the official app's public OAuth
+# client id; client_secrets are candidates extracted from TarjetaVirtual.exe (tried in
+# order at token exchange). Keep this file out of version control.
+client_id = "vsc2026"
+client_secrets = ["<secret candidate 1>", "<secret candidate 2>"]
