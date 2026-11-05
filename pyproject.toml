@@ -11,6 +11,7 @@ dependencies = [
 
 [project.optional-dependencies]
 keyring = ["keyring>=24"]
+webview = ["PyQt6>=6.6", "PyQt6-WebEngine>=6.6"]
 
 [project.scripts]
 izenpe-tv = "izenpe_tv.cli:main"

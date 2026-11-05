@@ -132,6 +132,18 @@ def login_auto(env: Environment, *, ui_locales: str = "eu", login_hint: str | No
     return token
 
 
+def login_webview(env: Environment, *, ui_locales: str = "eu",
+                  login_hint: str | None = None) -> Token:
+    """Preferred login: embedded Qt WebEngine browser (mirrors the official client)."""
+    from . import webview_login as wv
+    redirect, state = wv.webview_login(env, ui_locales=ui_locales, login_hint=login_hint)
+    code = oauth.parse_redirect(redirect, expected_state=state)
+    token, cid = _resolve_client_and_exchange(env, code)
+    storage.save_token(env.profile, token)
+    print(f"\nLogged in (client_id={cid}). Token expires in {token.expires_in}s.")
+    return token
+
+
 def login_manual(env: Environment, *, ui_locales: str = "eu",
                  login_hint: str | None = None, open_browser: bool = True) -> Token:
     url, state = oauth.build_authorize_url(env, ui_locales=ui_locales, login_hint=login_hint)

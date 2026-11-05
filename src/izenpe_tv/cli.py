@@ -18,10 +18,16 @@ def _env(args) -> config.Environment:
 
 def cmd_login(args):
     env = _env(args)
-    if args.manual:
+    method = args.method
+    if method == "auto":
+        from . import webview_login
+        method = "webview" if webview_login.available() else "browser"
+    if method == "webview":
+        login.login_webview(env, ui_locales=args.locale, login_hint=args.dni)
+    elif method == "manual":
         login.login_manual(env, ui_locales=args.locale, login_hint=args.dni,
                            open_browser=not args.no_browser)
-    else:
+    else:  # browser (external) with oauth-swift handler capture
         try:
             login.login_auto(env, ui_locales=args.locale, login_hint=args.dni)
         except login.oauth.OAuthError as e:
@@ -135,8 +141,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("login", help="log in via the system browser")
     sp.add_argument("--locale", default="eu", choices=["eu", "es"])
     sp.add_argument("--dni", help="prefill DNI/NIE (login_hint)")
-    sp.add_argument("--manual", action="store_true",
-                    help="paste the redirect URL instead of auto-capturing it")
+    sp.add_argument("--method", choices=["auto", "webview", "browser", "manual"],
+                    default="auto",
+                    help="login UI: auto (webview if available), webview (embedded), "
+                         "browser (external + handler), manual (paste URL)")
+    sp.add_argument("--manual", dest="method", action="store_const", const="manual",
+                    help="shortcut for --method manual")
     sp.add_argument("--no-browser", action="store_true", help="don't auto-open the browser")
     sp.set_defaults(func=cmd_login)
 

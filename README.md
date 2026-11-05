@@ -28,8 +28,10 @@ pip install -e .           # requests + cryptography; optional: pip install -e '
 ## Usage
 
 ```bash
-# Profesional (default). Logs in via your browser; paste back the oauth-swift://… URL.
+# Profesional (default). Opens an embedded login window (needs the `webview` extra:
+# pip install -e '.[webview]'); falls back to the external browser otherwise.
 izenpe-tv --env profesional login --dni 12345678Z
+# force a specific login UI:  --method webview | browser | manual
 
 izenpe-tv whoami                     # your user info (name, CIF, …)
 izenpe-tv identities                 # list signing identities + ids
