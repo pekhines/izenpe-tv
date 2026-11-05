@@ -49,8 +49,8 @@ def webview_login(env: Environment, *, ui_locales: str = "eu",
     """Open the login window; return (redirect_url, state). Raises on cancel/timeout."""
     from PyQt6.QtCore import QUrl, QTimer
     from PyQt6.QtWebEngineCore import (
-        QWebEnginePage, QWebEngineProfile, QWebEngineUrlScheme,
-        QWebEngineUrlSchemeHandler,
+        QWebEngineLoadingInfo, QWebEnginePage, QWebEngineProfile,
+        QWebEngineUrlRequestInterceptor, QWebEngineUrlScheme, QWebEngineUrlSchemeHandler,
     )
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     from PyQt6.QtWidgets import QApplication
@@ -64,25 +64,40 @@ def webview_login(env: Environment, *, ui_locales: str = "eu",
     scheme_name = b"oauth-swift"
     if not QApplication.instance():
         s = QWebEngineUrlScheme(scheme_name)
-        s.setFlags(QWebEngineUrlScheme.Flag.SecureScheme
-                   | QWebEngineUrlScheme.Flag.LocalScheme
-                   | QWebEngineUrlScheme.Flag.LocalAccessAllowed)
+        # NOT LocalScheme: Chromium refuses https -> local-scheme redirects with
+        # net::ERR_UNSAFE_REDIRECT, which is exactly the final OAuth hop.
+        s.setFlags(QWebEngineUrlScheme.Flag.SecureScheme)
         QWebEngineUrlScheme.registerScheme(s)
 
     app = QApplication.instance() or QApplication(sys.argv)
 
     captured: dict[str, str] = {}
 
+    def capture(u: str, how: str) -> None:
+        if "url" not in captured and u.startswith("oauth-swift://"):
+            _log(f"[webview] captured callback via {how}")
+            captured["url"] = u
+            QTimer.singleShot(0, app.quit)
+
+    class Interceptor(QWebEngineUrlRequestInterceptor):
+        # sees every request, including the hop a server 302 points at
+        def interceptRequest(self, info):
+            u = info.requestUrl().toString()
+            if u.startswith("oauth-swift://"):
+                info.block(True)
+                capture(u, "request interceptor")
+
     class CallbackHandler(QWebEngineUrlSchemeHandler):
         def requestStarted(self, job):
             u = job.requestUrl().toString()
-            _log(f"[webview] callback scheme hit: {u}")
-            captured["url"] = u
-            app.quit()
+            _log("[webview] callback scheme hit")
+            capture(u, "scheme handler")
 
     handler = CallbackHandler()
     profile = QWebEngineProfile()  # off-the-record: no stale cookies
     profile.installUrlSchemeHandler(scheme_name, handler)
+    interceptor = Interceptor()
+    profile.setUrlRequestInterceptor(interceptor)
 
     class Page(QWebEnginePage):
         def __init__(self):
@@ -92,8 +107,7 @@ def webview_login(env: Environment, *, ui_locales: str = "eu",
             s = qurl.toString()
             _log(f"[webview] navigate ({'main' if is_main_frame else 'sub'}): {s}")
             if s.startswith("oauth-swift://"):
-                captured["url"] = s
-                app.quit()
+                capture(s, "navigation request")
                 return False
             return super().acceptNavigationRequest(qurl, nav_type, is_main_frame)
 
@@ -114,6 +128,22 @@ def webview_login(env: Environment, *, ui_locales: str = "eu",
             page.toHtml(dump)
 
     page.loadFinished.connect(on_load_finished)
+
+    def on_loading_changed(info):
+        st = info.status()
+        if st == QWebEngineLoadingInfo.LoadStatus.LoadFailedStatus:
+            _log(f"[webview] load failed: url={info.url().toString()} "
+                 f"error={info.errorCode()} {info.errorString()!r}")
+            try:  # Qt >= 6.6 exposes the response headers of the failed load
+                hdrs = info.responseHeaders()
+                for k, v in hdrs.items():
+                    key = bytes(k).decode(errors="replace")
+                    if key.lower() == "location":
+                        capture(bytes(v).decode(errors="replace"), "Location header")
+            except Exception:
+                pass
+
+    page.loadingChanged.connect(on_loading_changed)
     view.setWindowTitle("Izenpe Tarjeta Virtual - Autentifikazioa")
     view.resize(520, 720)
     page.load(QUrl(url))
@@ -125,6 +155,17 @@ def webview_login(env: Environment, *, ui_locales: str = "eu",
     timer.start(int(timeout * 1000))
 
     app.exec()
+
+    # Tear down page before its profile (otherwise QtWebEngine may crash on exit).
+    timer.stop()
+    view.hide()
+    try:
+        from PyQt6 import sip
+        sip.delete(view)
+        sip.delete(page)
+        sip.delete(profile)
+    except Exception:
+        pass
 
     redirect = captured.get("url")
     if not redirect:
