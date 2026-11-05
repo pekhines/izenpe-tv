@@ -95,9 +95,16 @@ def build_authorize_url(
 def parse_redirect(redirect: str, *, expected_state: str | None = None) -> str:
     """Extract the authorization `code` from an oauth-swift://oauth-callback?... URL."""
     parsed = urlparse.urlparse(redirect)
+    # error params can appear in the query OR the fragment
     qs = urlparse.parse_qs(parsed.query)
+    if parsed.fragment:
+        for k, v in urlparse.parse_qs(parsed.fragment).items():
+            qs.setdefault(k, v)
     if "error" in qs:
-        raise OAuthError(f"authorization error: {qs['error'][0]} {qs.get('error_description',[''])[0]}")
+        raise OAuthError(
+            f"authorization error: {qs['error'][0]} — "
+            f"{qs.get('error_description', [''])[0]}"
+        )
     code = qs.get("code", [None])[0]
     if not code:
         raise OAuthError(f"no authorization code in redirect: {redirect!r}")

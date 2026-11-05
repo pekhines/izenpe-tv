@@ -35,6 +35,21 @@ def cmd_install_handler(args):
     print(f"Registered oauth-swift:// handler: {path}")
 
 
+def cmd_debug_url(args):
+    """Decode any URL's query/fragment params (for diagnosing the login flow). No network."""
+    import urllib.parse as up
+    p = up.urlparse(args.url)
+    print(f"scheme : {p.scheme}")
+    print(f"host   : {p.netloc}")
+    print(f"path   : {p.path}")
+    for name, raw in (("query", p.query), ("fragment", p.fragment)):
+        if not raw:
+            continue
+        print(f"--- {name} ---")
+        for k, v in up.parse_qsl(raw, keep_blank_values=True):
+            print(f"  {k} = {v}")
+
+
 def cmd_logout(args):
     storage.clear_token(_env(args).profile)
     print("Token cleared.")
@@ -128,6 +143,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("install-handler", help="register the oauth-swift:// browser handler")
     sp.set_defaults(func=cmd_install_handler)
 
+    sp = sub.add_parser("debug-url", help="decode a pasted URL's params (diagnostics)")
+    sp.add_argument("url")
+    sp.set_defaults(func=cmd_debug_url)
+
     sp = sub.add_parser("logout", help="clear stored token")
     sp.set_defaults(func=cmd_logout)
 
@@ -168,7 +187,9 @@ See docs/PROTOCOL.md §2.
 def main(argv=None):
     args = build_parser().parse_args(argv)
     config.load_client_credentials()
-    if not config.credentials_present():
+    if args.cmd in ("debug-url", "install-handler"):
+        pass
+    elif not config.credentials_present():
         print(CRED_HELP, file=sys.stderr)
         sys.exit(2)
     try:
