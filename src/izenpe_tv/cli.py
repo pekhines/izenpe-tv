@@ -138,6 +138,27 @@ def cmd_sign(args):
         print(base64.b64encode(sig).decode())
 
 
+def cmd_setup_credentials(args):
+    import os
+    from . import credentials
+    path = credentials.config_path()
+    if os.path.exists(path) and not args.force:
+        print(f"{path} already exists (use --force to overwrite)", file=sys.stderr)
+        sys.exit(1)
+    try:
+        cid, secrets = credentials.extract(args.installer)
+    except credentials.CredentialsError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    if not secrets:
+        print("error: no client credentials found in that file (is it the official\n"
+              "TarjetaVirtual-Setup-*.msi or TarjetaVirtual.exe?)", file=sys.stderr)
+        sys.exit(1)
+    cid = cid or config.DEFAULT_CLIENT_ID
+    credentials.write_config(cid, secrets, path)
+    print(f"ok: client_id={cid}, {len(secrets)} secret candidate(s) -> {path}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="izenpe-tv",
                                 description="Unofficial Linux client for Izenpe Tarjeta Virtual")
@@ -160,6 +181,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--app-version", help="send app_version= (diagnostics)")
     sp.add_argument("--app-arch", help="send app_arch= (diagnostics)")
     sp.set_defaults(func=cmd_login)
+
+    sp = sub.add_parser("setup-credentials",
+                        help="extract the OAuth client credentials from the official installer")
+    sp.add_argument("installer", help="TarjetaVirtual-Setup-<ver>.msi (or TarjetaVirtual.exe)")
+    sp.add_argument("--force", action="store_true", help="overwrite an existing client.toml")
+    sp.set_defaults(func=cmd_setup_credentials)
 
     sp = sub.add_parser("install-handler", help="register the oauth-swift:// browser handler")
     sp.set_defaults(func=cmd_install_handler)
@@ -198,17 +225,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 CRED_HELP = """\
 OAuth client credentials are not configured. They are embedded in the official Izenpe
-desktop app; extract them and provide them via either:
-  * env: IZENPE_TV_CLIENT_IDS=id1,id2 IZENPE_TV_CLIENT_SECRET_PROD=... [IZENPE_TV_CLIENT_SECRET_DESA=...]
-  * file: ~/.config/izenpe-tv/client.toml  (see client.toml.example)
-See docs/PROTOCOL.md §2.
+Windows app: download TarjetaVirtual-Setup-<ver>.msi from Izenpe and run
+  izenpe-tv setup-credentials TarjetaVirtual-Setup-<ver>.msi
+(alternatives: env IZENPE_TV_CLIENT_ID / IZENPE_TV_CLIENT_SECRETS, or write
+~/.config/izenpe-tv/client.toml by hand, see client.toml.example)
 """
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
     config.load_client_credentials()
-    if args.cmd in ("debug-url", "install-handler"):
+    if args.cmd in ("debug-url", "install-handler", "setup-credentials"):
         pass
     elif not config.credentials_present():
         print(CRED_HELP, file=sys.stderr)

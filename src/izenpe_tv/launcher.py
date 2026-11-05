@@ -126,7 +126,7 @@ def main(argv=None) -> int:
     try:
         config.load_client_credentials()
         if not config.credentials_present():
-            raise RuntimeError("OAuth client not configured (~/.config/izenpe-tv/client.toml)")
+            raise RuntimeError("OAuth client not configured: run `izenpe-tv setup-credentials TarjetaVirtual-Setup-<ver>.msi`")
         env = config.ENVIRONMENTS[args.env]
 
         ensure_agent(args.env)

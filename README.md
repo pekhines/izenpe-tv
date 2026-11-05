@@ -1,66 +1,117 @@
-# izenpe-tv — Linux client for Izenpe's Tarjeta Virtual
+# izenpe-tv — Izenperen Txartel Birtuala Linuxen
 
-Unofficial client that lets **Linux** applications use your Izenpe **cloud certificates**
-(BakQ / Profesional) for authentication and signing. Izenpe only ships official clients
-for Windows, macOS and mobile; this fills the gap.
+Izenperen **hodeiko ziurtagiri profesionala** (Txartel Birtuala / Tarjeta Virtual) Linuxen
+erabiltzeko bezero **ez-ofiziala**. Izenpek Windows, macOS eta mugikorretarako bezeroak
+bakarrik eskaintzen ditu. Honekin, ziurtagiria txartel adimendun bat balitz bezala
+agertzen da Firefox, Chrome, AutoFirma, Idazki Desktop, LibreOffice eta Thunderbird-en.
 
-The private key never leaves Izenpe's HSM: you log in (DNI/NIE + password + SMS code),
-and every signature is performed remotely. The protocol was reverse-engineered from the
-official Windows app for **interoperability** (EU Directive 2009/24/EC art. 6); you only
-ever use **your own** certificate. See [docs/PROTOCOL.md](docs/PROTOCOL.md).
+Gako pribatua ez da inoiz Izenperen HSMtik ateratzen: saioa hasten duzu (NAN/AIZ +
+pasahitza + SMS kodea) eta sinadura bakoitza urrunean egiten da. Protokoloa Windowseko
+aplikazio ofizialetik atera da **elkarreragingarritasunerako** (2009/24/EE Zuzentaraua,
+6. art.), eta norberaren ziurtagiria erabiltzeko bakarrik balio du.
 
-> ⚠️ Not affiliated with or endorsed by Izenpe. Use at your own risk.
+> ⚠️ Ez dago Izenperekin lotuta, eta Izenpek ez du onartzen. Zure ardurapean erabili.
+> Arazoak badituzu, ez jo Izenperen laguntza-zerbitzura: ireki *issue* bat hemen.
 
-## Status
+## Nola dabilen
 
-**Milestone 1 (in progress): protocol CLI.** Log in, list your identities, download your
-certificate, and sign a hash — to validate the full flow end-to-end.
+```
+aplikazioa ──PKCS#11──► libizenpe-pkcs11.so ──socket──► izenpe-tv-agent ──HTTPS──► Izenpe HSM
+                                                              ▲
+                                       izenpelogin (NAN + pasahitza + SMS)
+```
 
-Next: a background agent + a **PKCS#11** module so Firefox, Chrome, AutoFirma,
-LibreOffice and Thunderbird see the certificate like a smartcard.
+1. **`izenpelogin`**: Izenperen saio-hasierako leihoa irekitzen du eta saioa gordetzen du.
+2. **`libizenpe-pkcs11.so`**: aplikazioek kargatzen duten PKCS#11 modulua (txartel-irakurgailu
+   baten "driverra" balitz bezala).
+3. **`izenpe-tv-agent`**: atzeko planoko prozesua (systemd erabiltzaile-unitatea). Saioa
+   gordetzen du eta sinadurak Izenperi eskatzen dizkio. `izenpelogin`-ek abiarazten du.
 
-## Install (dev)
+## Instalazioa
+
+Behar dena: Linux x86_64, Python ≥ 3.10 (`venv`-arekin), C konpilatzailea eta `make`,
+eta, aukeran, `modutil` (NSS) eta `7z` edo `msiextract`.
 
 ```bash
-pip install -e .           # requests + cryptography; optional: pip install -e '.[keyring]'
+# Debian / Ubuntu
+sudo apt install git python3-venv build-essential libnss3-tools 7zip
+# Fedora
+sudo dnf install git python3 gcc make nss-tools 7zip
+# Arch
+sudo pacman -S git python base-devel nss 7zip
 ```
 
-## One-click: `izenpelogin`
+1. **Klonatu** repo-a:
+   ```bash
+   git clone https://github.com/pekhines/izenpe-tv.git
+   cd izenpe-tv
+   ```
+2. **Deskargatu Izenperen instalatzaile ofiziala Windowserako**
+   (`TarjetaVirtual-Setup-X.Y.Z.msi`) Izenperen webgunetik, eta utzi `~/Deskargak`-en
+   (edo `~/Downloads`-en). Ez da instalatzen: aplikazio ofizialak bere barruan dituen OAuth
+   kredentzialak ateratzeko bakarrik behar da. Proiektu honek ez ditu kredentzial horiek
+   banatzen.
+3. **Exekutatu instalatzailea** (ez du root behar):
+   ```bash
+   ./install.sh
+   # edo instalatzailea beste nonbait badago:
+   ./install.sh --msi /bidea/TarjetaVirtual-Setup-X.Y.Z.msi
+   ```
+   Modulua konpilatu, Python ingurunea sortu, `izenpelogin` menuan jarri, kredentzialak
+   atera eta modulua aurkitzen dituen aplikazioetan erregistratzen du (galdetu egiten du
+   aurretik).
+
+Eguneratzeko: `git pull && ./install.sh`. Desinstalatzeko: `./install.sh --uninstall`.
+
+## Erabilera
+
+1. Ireki **izenpelogin** menutik (edo `izenpelogin` terminalean).
+2. Sartu NAN/AIZ, pasahitza eta SMS bidez jasotako kodea.
+3. Jakinarazpen batek esango dizu saioa noiz arte dagoen aktibo. Iraungi baino 5 minutu
+   lehenago gogorarazi egingo dizu.
+4. Erabili ziurtagiria aplikazioetan. PINik ez da behar: eskatzen badute, idatzi edozer.
+
+Aplikazio bakoitzaren gida zehatza: **[docs/APLIKAZIOAK.md](docs/APLIKAZIOAK.md)**
+— Firefox (webguneetan sartzea), AutoFirma, Idazki Desktop, Chrome, LibreOffice.
+
+Saioa iraungitzen denean, berriro `izenpelogin` besterik ez. Konfigurazioa behin bakarrik
+egiten da.
+
+### Terminaletik
 
 ```bash
-packaging/install-izenpelogin.sh [icon.png]   # menu entry + desktop icon + ~/.local/bin/izenpelogin
+izenpe-tv whoami                  # zure datuak (izena, CIF…)
+izenpe-tv identities              # sinadura-identitateak
+izenpe-tv cert <id> --pem         # ziurtagiria
+echo -n "kaixo" | izenpe-tv sign <id> --hash sha256
 ```
 
-Clicking **izenpelogin** starts the agent if needed, opens the Izenpe login window
-(you type DNI/NIE, password and the SMS code), checks the certificate is reachable and
-shows a notification with the time the session stays active. A reminder pops up five
-minutes before it expires. Log: `~/.cache/izenpe-tv/izenpelogin.log`.
+## Arazoak
 
-## Usage
+| Arazoa | Konponbidea |
+|---|---|
+| Ziurtagiria ez da agertzen | Saioa iraungita? Exekutatu `izenpelogin`. Aplikazioa berrabiarazi. |
+| `HTTP 401` | Saioa iraungi da: `izenpelogin`. |
+| Flatpak Firefox/AutoFirmak ez du modulua ikusten | `./install.sh` berriro, eta aplikazioa guztiz itxi eta ireki. |
+| Idazkik PKCS12 fitxategia eskatzen du | Ikus [docs/APLIKAZIOAK.md](docs/APLIKAZIOAK.md#idazki-desktop). |
+| Agentearen loga | `journalctl --user -u izenpe-tv-agent` |
+| izenpelogin-en loga | `~/.cache/izenpe-tv/izenpelogin.log` |
 
-```bash
-# Profesional (default). Opens an embedded login window (needs the `webview` extra:
-# pip install -e '.[webview]'); falls back to the external browser otherwise.
-izenpe-tv --env profesional login --dni 12345678Z
-# force a specific login UI:  --method webview | browser | manual
-
-izenpe-tv whoami                     # your user info (name, CIF, …)
-izenpe-tv identities                 # list signing identities + ids
-izenpe-tv cert <identity_id>         # certificate summary (--pem / --out cert.der)
-echo -n "hola" | izenpe-tv sign <identity_id> --hash sha256   # remote signature (base64)
-```
-
-Profiles: `profesional`, `ciudadano` (BakQ) and their `-desa` (test) variants via `--env`.
-
-## Layout
+## Egitura
 
 ```
+install.sh              erabiltzaile-instalatzailea
+pkcs11/                 PKCS#11 modulua (C, libc bakarrik)
 src/izenpe_tv/
-  config.py   environments, endpoints, scopes, acr_values, client creds
-  oauth.py    authorization-code flow + token refresh
-  api.py      users/me, sign_identities, remote signature (server/raw)
-  login.py    browser login + redirect capture
-  storage.py  token persistence (Secret Service or 0600 file)
-  cli.py      command-line interface
-docs/PROTOCOL.md   full reverse-engineered protocol
+  launcher.py           izenpelogin
+  agent.py              agentea (PKCS#11 ↔ Izenpe)
+  webview_login.py      saio-hasierako leihoa (Qt WebEngine)
+  credentials.py        OAuth kredentzialak instalatzaile ofizialetik atera
+  oauth.py, api.py      OAuth eta Izenperen REST APIa
+docs/APLIKAZIOAK.md     aplikazio bakoitzaren gida
+docs/PROTOCOL.md        protokoloaren deskribapen teknikoa
 ```
+
+## Lizentzia
+
+[GPL-3.0](LICENSE). `pkcs11/include/pkcs11.h` p11-kit-etik dator (bere lizentziarekin).
