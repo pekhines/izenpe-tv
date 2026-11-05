@@ -9,10 +9,29 @@ Requires PyQt6 + PyQt6-WebEngine (optional dependency group `webview`).
 """
 from __future__ import annotations
 
+import os
 import sys
+import time
 
 from . import config, oauth
 from .config import Environment
+
+
+def _debug_log_path() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    d = os.path.join(base, "izenpe-tv")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, "login-debug.log")
+
+
+def _log(msg: str) -> None:
+    line = f"{time.strftime('%H:%M:%S')} {msg}"
+    print(line)
+    try:
+        with open(_debug_log_path(), "a") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
 
 
 def available() -> bool:
@@ -25,7 +44,8 @@ def available() -> bool:
 
 def webview_login(env: Environment, *, ui_locales: str = "eu",
                   login_hint: str | None = None, timeout: float = 300.0,
-                  debug: bool = True) -> tuple[str, str]:
+                  debug: bool = True, client_id: str | None = None,
+                  app_params: dict | None = None) -> tuple[str, str]:
     """Open the login window; return (redirect_url, state). Raises on cancel/timeout."""
     from PyQt6.QtCore import QUrl, QTimer
     from PyQt6.QtWebEngineCore import (
@@ -35,7 +55,10 @@ def webview_login(env: Environment, *, ui_locales: str = "eu",
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     from PyQt6.QtWidgets import QApplication
 
-    url, state = oauth.build_authorize_url(env, ui_locales=ui_locales, login_hint=login_hint)
+    url, state = oauth.build_authorize_url(env, ui_locales=ui_locales, login_hint=login_hint,
+                                           client_id=client_id, app_params=app_params)
+    _log(f"[webview] debug log: {_debug_log_path()}")
+    _log(f"[webview] authorize URL: {url}")
 
     # The custom scheme must be registered before the QApplication is created.
     scheme_name = b"oauth-swift"
@@ -53,8 +76,7 @@ def webview_login(env: Environment, *, ui_locales: str = "eu",
     class CallbackHandler(QWebEngineUrlSchemeHandler):
         def requestStarted(self, job):
             u = job.requestUrl().toString()
-            if debug:
-                print(f"[webview] callback scheme hit: {u}")
+            _log(f"[webview] callback scheme hit: {u}")
             captured["url"] = u
             app.quit()
 
@@ -68,8 +90,7 @@ def webview_login(env: Environment, *, ui_locales: str = "eu",
 
         def acceptNavigationRequest(self, qurl, nav_type, is_main_frame):
             s = qurl.toString()
-            if debug:
-                print(f"[webview] navigate: {s}")
+            _log(f"[webview] navigate ({'main' if is_main_frame else 'sub'}): {s}")
             if s.startswith("oauth-swift://"):
                 captured["url"] = s
                 app.quit()
@@ -79,6 +100,20 @@ def webview_login(env: Environment, *, ui_locales: str = "eu",
     view = QWebEngineView()
     page = Page()
     view.setPage(page)
+    page.urlChanged.connect(lambda q: _log(f"[webview] urlChanged: {q.toString()}"))
+
+    def on_load_finished(ok):
+        u = page.url().toString()
+        _log(f"[webview] loadFinished ok={ok} url={u} title={page.title()!r}")
+        if "error" in u.lower() or "error" in (page.title() or "").lower():
+            def dump(html):
+                import re
+                text = re.sub(r"<[^>]+>", " ", html)
+                text = re.sub(r"\s+", " ", text).strip()
+                _log(f"[webview] ERROR PAGE TEXT: {text[:1500]}")
+            page.toHtml(dump)
+
+    page.loadFinished.connect(on_load_finished)
     view.setWindowTitle("Izenpe Tarjeta Virtual - Autentifikazioa")
     view.resize(520, 720)
     page.load(QUrl(url))

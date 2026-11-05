@@ -19,11 +19,18 @@ def _env(args) -> config.Environment:
 def cmd_login(args):
     env = _env(args)
     method = args.method
+    app_params = {}
+    for k in ("app_platform", "app_version", "app_arch"):
+        v = getattr(args, k)
+        if v is not None:
+            app_params[k] = v
+    app_params = app_params or None
     if method == "auto":
         from . import webview_login
         method = "webview" if webview_login.available() else "browser"
     if method == "webview":
-        login.login_webview(env, ui_locales=args.locale, login_hint=args.dni)
+        login.login_webview(env, ui_locales=args.locale, login_hint=args.dni,
+                            client_id=args.client_id, app_params=app_params)
     elif method == "manual":
         login.login_manual(env, ui_locales=args.locale, login_hint=args.dni,
                            open_browser=not args.no_browser)
@@ -148,6 +155,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--manual", dest="method", action="store_const", const="manual",
                     help="shortcut for --method manual")
     sp.add_argument("--no-browser", action="store_true", help="don't auto-open the browser")
+    sp.add_argument("--client-id", help="override the OAuth client_id (diagnostics)")
+    sp.add_argument("--app-platform", help="send app_platform= (diagnostics)")
+    sp.add_argument("--app-version", help="send app_version= (diagnostics)")
+    sp.add_argument("--app-arch", help="send app_arch= (diagnostics)")
     sp.set_defaults(func=cmd_login)
 
     sp = sub.add_parser("install-handler", help="register the oauth-swift:// browser handler")

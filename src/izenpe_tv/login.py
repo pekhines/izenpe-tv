@@ -26,11 +26,14 @@ SCHEME = "oauth-swift"
 DESKTOP_ID = "izenpe-tv-callback.desktop"
 
 
-def _resolve_client_and_exchange(env: Environment, code: str) -> tuple[Token, str]:
+def _resolve_client_and_exchange(env: Environment, code: str,
+                                 prefer: str | None = None) -> tuple[Token, str]:
     """Exchange the code, trying each candidate client_id until one works."""
     last = None
     s = requests.Session()
-    for cid in config.CLIENT_ID_CANDIDATES:
+    candidates = ([prefer] if prefer else []) + [c for c in config.CLIENT_ID_CANDIDATES
+                                                 if c != prefer]
+    for cid in candidates:
         try:
             tok = oauth.exchange_code(env, code, client_id=cid, session=s)
             return tok, cid
@@ -133,12 +136,14 @@ def login_auto(env: Environment, *, ui_locales: str = "eu", login_hint: str | No
 
 
 def login_webview(env: Environment, *, ui_locales: str = "eu",
-                  login_hint: str | None = None) -> Token:
+                  login_hint: str | None = None, client_id: str | None = None,
+                  app_params: dict | None = None) -> Token:
     """Preferred login: embedded Qt WebEngine browser (mirrors the official client)."""
     from . import webview_login as wv
-    redirect, state = wv.webview_login(env, ui_locales=ui_locales, login_hint=login_hint)
+    redirect, state = wv.webview_login(env, ui_locales=ui_locales, login_hint=login_hint,
+                                       client_id=client_id, app_params=app_params)
     code = oauth.parse_redirect(redirect, expected_state=state)
-    token, cid = _resolve_client_and_exchange(env, code)
+    token, cid = _resolve_client_and_exchange(env, code, prefer=client_id)
     storage.save_token(env.profile, token)
     print(f"\nLogged in (client_id={cid}). Token expires in {token.expires_in}s.")
     return token
