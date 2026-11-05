@@ -1,0 +1,11 @@
+[Unit]
+Description=Izenpe Tarjeta Virtual agent (PKCS#11 backend)
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/izenpe-tv-agent --env profesional
+Restart=on-failure
+# socket is created under $XDG_RUNTIME_DIR
+
+[Install]
+WantedBy=default.target

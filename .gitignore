@@ -11,3 +11,5 @@ build/
 *.dmg
 reversing/
 client.toml
+*.so
+pkcs11/libizenpe-pkcs11.so

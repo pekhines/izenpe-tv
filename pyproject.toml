@@ -14,6 +14,8 @@ keyring = ["keyring>=24"]
 
 [project.scripts]
 izenpe-tv = "izenpe_tv.cli:main"
+izenpe-tv-agent = "izenpe_tv.agent:main"
+izenpe-tv-callback = "izenpe_tv.callback:main"
 
 [build-system]
 requires = ["setuptools>=68"]

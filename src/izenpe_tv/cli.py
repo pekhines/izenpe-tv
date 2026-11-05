@@ -18,8 +18,21 @@ def _env(args) -> config.Environment:
 
 def cmd_login(args):
     env = _env(args)
-    login.login_manual(env, ui_locales=args.locale, login_hint=args.dni,
-                        open_browser=not args.no_browser)
+    if args.manual:
+        login.login_manual(env, ui_locales=args.locale, login_hint=args.dni,
+                           open_browser=not args.no_browser)
+    else:
+        try:
+            login.login_auto(env, ui_locales=args.locale, login_hint=args.dni)
+        except login.oauth.OAuthError as e:
+            print(f"\nAutomatic capture failed: {e}\nFalling back to manual paste.\n")
+            login.login_manual(env, ui_locales=args.locale, login_hint=args.dni,
+                               open_browser=not args.no_browser)
+
+
+def cmd_install_handler(args):
+    path = login.install_scheme_handler()
+    print(f"Registered oauth-swift:// handler: {path}")
 
 
 def cmd_logout(args):
@@ -107,8 +120,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("login", help="log in via the system browser")
     sp.add_argument("--locale", default="eu", choices=["eu", "es"])
     sp.add_argument("--dni", help="prefill DNI/NIE (login_hint)")
+    sp.add_argument("--manual", action="store_true",
+                    help="paste the redirect URL instead of auto-capturing it")
     sp.add_argument("--no-browser", action="store_true", help="don't auto-open the browser")
     sp.set_defaults(func=cmd_login)
+
+    sp = sub.add_parser("install-handler", help="register the oauth-swift:// browser handler")
+    sp.set_defaults(func=cmd_install_handler)
 
     sp = sub.add_parser("logout", help="clear stored token")
     sp.set_defaults(func=cmd_logout)
