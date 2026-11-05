@@ -121,9 +121,13 @@ library listed in **`/usr/local/idazki-desktop/pkcs11.properties`** (one path pe
 Add the module there (host terminal, needs sudo):
 
 ```bash
-echo "$HOME/.local/lib/izenpe-tv/libizenpe-pkcs11.so" | \
+printf '\n%s\n' "$HOME/.local/lib/izenpe-tv/libizenpe-pkcs11.so" | \
     sudo tee -a /usr/local/idazki-desktop/pkcs11.properties
 ```
+
+The shipped file has **no trailing newline**: a plain `echo >>` glues the path onto the
+last line (`…/opensc-pkcs11.so/home/…`) and Idazki silently falls back to PKCS#12.
+An update of Idazki may overwrite the file: re-check after upgrading.
 
 If Idazki asks for a PIN, any value works: authentication happens in the agent.
 Verified with Idazki's own Java 11 (`keytool` + `SunPKCS11`: lists the key, signs a CSR).

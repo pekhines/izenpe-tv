@@ -187,8 +187,45 @@ _HASH_OF_MECH = {
     "CKM_SHA1_RSA_PKCS_PSS": "sha1", "CKM_SHA256_RSA_PKCS_PSS": "sha256",
     "CKM_SHA384_RSA_PKCS_PSS": "sha384", "CKM_SHA512_RSA_PKCS_PSS": "sha512",
 }
-_DIGESTINFO_LEN = {35: "sha1", 51: "sha256", 67: "sha384", 83: "sha512"}
 _RAW_LEN = {20: "sha1", 32: "sha256", 48: "sha384", 64: "sha512"}
+_HASH_OIDS = {  # DER-encoded OID contents → hash name
+    bytes.fromhex("2b0e03021a"): "sha1",
+    bytes.fromhex("608648016503040201"): "sha256",
+    bytes.fromhex("608648016503040202"): "sha384",
+    bytes.fromhex("608648016503040203"): "sha512",
+}
+
+
+def _parse_digestinfo(data: bytes) -> tuple[str, bytes] | None:
+    """Parse a PKCS#1 DigestInfo; return (hash_name, raw_hash) or None.
+
+    Accepts AlgorithmIdentifier parameters both as NULL (RFC 8017) and absent:
+    Idazki Desktop sends the latter (49-byte SHA-256 DigestInfo).
+    All lengths involved are < 128, so only DER short-form lengths are handled.
+    """
+    try:
+        if data[0] != 0x30 or data[1] != len(data) - 2:
+            return None
+        if data[2] != 0x30:
+            return None
+        alg_len = data[3]
+        alg = data[4:4 + alg_len]
+        p = 4 + alg_len
+        if alg[0] != 0x06:
+            return None
+        oid = alg[2:2 + alg[1]]
+        if alg[2 + alg[1]:] not in (b"", b"\x05\x00"):
+            return None
+        h = _HASH_OIDS.get(oid)
+        if h is None or data[p] != 0x04:
+            return None
+        dlen = data[p + 1]
+        digest = data[p + 2:p + 2 + dlen]
+        if dlen != _raw_len_for(h) or p + 2 + dlen != len(data):
+            return None
+        return h, digest
+    except IndexError:
+        return None
 
 
 def _prepare_digest(mechanism: str, hash_hint: str | None, data: bytes):
@@ -200,10 +237,11 @@ def _prepare_digest(mechanism: str, hash_hint: str | None, data: bytes):
         digest = hashlib.new(h, data).digest()
         return digest, f"rsa-{h}", pss
     if mechanism in ("CKM_RSA_PKCS", "CKM_RSA_PKCS_PSS"):
-        if mechanism == "CKM_RSA_PKCS" and len(data) in _DIGESTINFO_LEN:
-            # strip DigestInfo ASN.1 prefix → raw hash
-            h = _DIGESTINFO_LEN[len(data)]
-            return data[-_raw_len_for(h):], f"rsa-{h}", False
+        di = _parse_digestinfo(data) if mechanism == "CKM_RSA_PKCS" else None
+        if di:
+            # strip DigestInfo ASN.1 wrapper → raw hash
+            h, digest = di
+            return digest, f"rsa-{h}", False
         if len(data) in _RAW_LEN:
             return data, f"rsa-{_RAW_LEN[len(data)]}", pss
         h = hash_hint or "sha256"
