@@ -115,8 +115,16 @@ certificate as a `PrivateKeyEntry` and signs a CSR that OpenSSL verifies.
 
 ## Idazki Desktop (Linux, 4.0.4)
 
-Idazki probes a fixed list of PKCS#11 paths (bit4id, DNIe, FNMT,
-`/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so`) and otherwise falls back to a PKCS#12 file.
-It also has `enableMozillaKeyStore` / `mozillaUserProfile` options (default off), which
-would let it use an NSS DB that includes this module. Where those options are configured
-is not documented; to be determined from the installed `idazkiDelegado.jar`.
+Idazki runs unsandboxed with its own JRE (`/usr/local/idazki-desktop/jre`, Java 11).
+With `enablePkcs11=true` (default in `izenpesigner-desktop.properties`) it tries every
+library listed in **`/usr/local/idazki-desktop/pkcs11.properties`** (one path per line).
+Add the module there (host terminal, needs sudo):
+
+```bash
+echo "$HOME/.local/lib/izenpe-tv/libizenpe-pkcs11.so" | \
+    sudo tee -a /usr/local/idazki-desktop/pkcs11.properties
+```
+
+If Idazki asks for a PIN, any value works: authentication happens in the agent.
+Verified with Idazki's own Java 11 (`keytool` + `SunPKCS11`: lists the key, signs a CSR).
+Alternative (not needed): `enableMozillaKeyStore=true` + `mozillaUserProfile=<NSS dir>`.
