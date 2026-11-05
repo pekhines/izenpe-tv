@@ -89,3 +89,34 @@ Then `p11-kit list-modules` should show the Izenpe token, and
   token); if signing fails with an auth error, re-run `izenpe-tv login`.
 - The module links only against libc/pthread, so the binary built on one machine runs on
   older glibc too (built here against ≤ GLIBC_2.14).
+
+## AutoFirma (Linux, 1.9)
+
+AutoFirma looks for Firefox in `~/.mozilla/firefox/profiles.ini`; with flatpak Firefox it
+falls back to the **shared NSS DB `~/.pki/nssdb`** and loads the external PKCS#11 modules
+listed in its `pkcs11.txt`. So register the module there (also used by Chrome/Chromium):
+
+```bash
+cp -a ~/.pki/nssdb ~/.pki/nssdb.bak-$(date +%F)       # backup first
+flatpak run --filesystem=~/.pki/nssdb --command=modutil org.freedesktop.Sdk//25.08 \
+    -dbdir sql:$HOME/.pki/nssdb -add "Izenpe Tarjeta Virtual" \
+    -libfile $HOME/.local/lib/izenpe-tv/libizenpe-pkcs11.so -force
+```
+
+Flatpak AutoFirma (`es.gob.afirma`) also needs to see the module and the agent socket:
+
+```bash
+flatpak override --user --filesystem=~/.local/lib/izenpe-tv:ro \
+                        --filesystem=xdg-run/izenpe-tv es.gob.afirma
+```
+
+Verified at the Java level: `keytool` with `SunPKCS11` (`library=` the module) lists the
+certificate as a `PrivateKeyEntry` and signs a CSR that OpenSSL verifies.
+
+## Idazki Desktop (Linux, 4.0.4)
+
+Idazki probes a fixed list of PKCS#11 paths (bit4id, DNIe, FNMT,
+`/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so`) and otherwise falls back to a PKCS#12 file.
+It also has `enableMozillaKeyStore` / `mozillaUserProfile` options (default off), which
+would let it use an NSS DB that includes this module. Where those options are configured
+is not documented; to be determined from the installed `idazkiDelegado.jar`.
