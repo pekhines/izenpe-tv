@@ -52,14 +52,22 @@ static identity_t g_ids[MAX_OBJECTS];
 static uint32_t g_nids = 0;
 static int g_objects_loaded = 0;
 
-/* one session (single-session token is enough for NSS client auth / signing) */
-static int g_session_open = 0;
-static CK_SESSION_HANDLE g_session = 1;
+static int g_session_open = 0;  /* number of open sessions (token info) */
 
-/* find-objects state */
-static int g_find_active = 0;
-static CK_OBJECT_HANDLE g_find_results[MAX_OBJECTS * 3];
-static uint32_t g_find_count = 0, g_find_pos = 0;
+/* per-session find state */
+#define MAX_SESSIONS 64
+typedef struct {
+    int open, find_active;
+    CK_OBJECT_HANDLE results[MAX_OBJECTS * 3];
+    uint32_t count, pos;
+} session_t;
+static session_t g_sessions[MAX_SESSIONS];
+
+static session_t *get_session(CK_SESSION_HANDLE h) {
+    if (h < 1 || h > MAX_SESSIONS || !g_sessions[h - 1].open) return NULL;
+    return &g_sessions[h - 1];
+}
+
 
 /* sign state */
 static int g_sign_active = 0;
@@ -77,6 +85,24 @@ static CK_MECHANISM_TYPE g_pss_hash = 0;   /* hashAlg from CK_RSA_PKCS_PSS_PARAM
 #define CLS_CERT 1
 #define CLS_PRIV 2
 #define CLS_PUB 3
+
+
+/* ------------------------------------------------------------- debug trace */
+#include <stdarg.h>
+#include <time.h>
+#include <sys/syscall.h>
+static void trace(const char *fmt, ...) {
+    static int checked = 0; static const char *path = NULL;
+    if (!checked) { path = getenv("IZENPE_P11_DEBUG"); checked = 1; }
+    if (!path || !*path) return;
+    FILE *f = fopen(path, "a"); if (!f) return;
+    struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+    fprintf(f, "%ld.%03ld tid=%ld ", (long)ts.tv_sec % 100000, ts.tv_nsec / 1000000,
+            (long)syscall(SYS_gettid));
+    va_list ap; va_start(ap, fmt); vfprintf(f, fmt, ap); va_end(ap);
+    fputc('\n', f); fclose(f);
+}
+#define TRACE(...) trace(__VA_ARGS__)
 
 /* ------------------------------------------------------------- agent socket */
 
@@ -266,6 +292,7 @@ static CK_RV set_attr(CK_ATTRIBUTE *a, const void *val, CK_ULONG len) {
 /* ------------------------------------------------------------- CK functions */
 
 CK_RV C_Initialize(CK_VOID_PTR pInitArgs) {
+    TRACE("C_Initialize");
     (void)pInitArgs;
     pthread_mutex_lock(&g_lock);
     if (g_initialized) { pthread_mutex_unlock(&g_lock); return CKR_CRYPTOKI_ALREADY_INITIALIZED; }
@@ -275,16 +302,19 @@ CK_RV C_Initialize(CK_VOID_PTR pInitArgs) {
 }
 
 CK_RV C_Finalize(CK_VOID_PTR pReserved) {
+    TRACE("C_Finalize");
     (void)pReserved;
     pthread_mutex_lock(&g_lock);
     free_identities();
     free(g_sign_buf); g_sign_buf = NULL; g_sign_buf_len = g_sign_buf_cap = 0;
-    g_initialized = 0; g_objects_loaded = 0; g_session_open = 0; g_find_active = 0;
+    g_initialized = 0; g_objects_loaded = 0; g_session_open = 0;
+    memset(g_sessions, 0, sizeof g_sessions);
     pthread_mutex_unlock(&g_lock);
     return CKR_OK;
 }
 
 CK_RV C_GetInfo(CK_INFO_PTR p) {
+    TRACE("C_GetInfo");
     if (!p) return CKR_ARGUMENTS_BAD;
     memset(p, 0, sizeof *p);
     p->cryptokiVersion.major = 2; p->cryptokiVersion.minor = 40;
@@ -297,6 +327,7 @@ CK_RV C_GetInfo(CK_INFO_PTR p) {
 CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList);
 
 CK_RV C_GetSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList, CK_ULONG_PTR pulCount) {
+    TRACE("C_GetSlotList");
     (void)tokenPresent;
     if (!pulCount) return CKR_ARGUMENTS_BAD;
     if (pSlotList == NULL_PTR) { *pulCount = 1; return CKR_OK; }
@@ -311,6 +342,7 @@ static void pad_field(CK_UTF8CHAR *dst, size_t n, const char *src) {
 }
 
 CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR p) {
+    TRACE("C_GetSlotInfo");
     if (slotID != SLOT_ID || !p) return CKR_SLOT_ID_INVALID;
     memset(p, 0, sizeof *p);
     pad_field(p->slotDescription, 64, "Izenpe Tarjeta Virtual (remote)");
@@ -322,6 +354,7 @@ CK_RV C_GetSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR p) {
 }
 
 CK_RV C_GetTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR p) {
+    TRACE("C_GetTokenInfo");
     if (slotID != SLOT_ID || !p) return CKR_SLOT_ID_INVALID;
     memset(p, 0, sizeof *p);
     pad_field(p->label, 32, "Izenpe TV");
@@ -349,6 +382,7 @@ static const CK_MECHANISM_TYPE g_mechs[] = {
 };
 
 CK_RV C_GetMechanismList(CK_SLOT_ID slotID, CK_MECHANISM_TYPE_PTR pList, CK_ULONG_PTR pulCount) {
+    TRACE("C_GetMechanismList");
     if (slotID != SLOT_ID || !pulCount) return CKR_SLOT_ID_INVALID;
     CK_ULONG n = sizeof g_mechs / sizeof g_mechs[0];
     if (pList == NULL_PTR) { *pulCount = n; return CKR_OK; }
@@ -358,6 +392,7 @@ CK_RV C_GetMechanismList(CK_SLOT_ID slotID, CK_MECHANISM_TYPE_PTR pList, CK_ULON
 }
 
 CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_MECHANISM_INFO_PTR p) {
+    TRACE("C_GetMechanismInfo");
     if (slotID != SLOT_ID || !p) return CKR_SLOT_ID_INVALID;
     if (!mech_name(type)) return CKR_MECHANISM_INVALID;
     memset(p, 0, sizeof *p);
@@ -368,28 +403,50 @@ CK_RV C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_MECHANISM
 
 CK_RV C_OpenSession(CK_SLOT_ID slotID, CK_FLAGS flags, CK_VOID_PTR app,
                     CK_NOTIFY notify, CK_SESSION_HANDLE_PTR ph) {
-    (void)flags; (void)app; (void)notify;
-    if (slotID != SLOT_ID || !ph) return CKR_SLOT_ID_INVALID;
+    TRACE("C_OpenSession");
+    (void)app; (void)notify;
+    if (slotID != SLOT_ID) return CKR_SLOT_ID_INVALID;
+    if (!ph) return CKR_ARGUMENTS_BAD;
+    if (!(flags & CKF_SERIAL_SESSION)) return CKR_SESSION_PARALLEL_NOT_SUPPORTED;
     pthread_mutex_lock(&g_lock);
-    g_session_open = 1;
-    *ph = g_session;
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (!g_sessions[i].open) {
+            memset(&g_sessions[i], 0, sizeof g_sessions[i]);
+            g_sessions[i].open = 1; g_session_open++;
+            *ph = (CK_SESSION_HANDLE)(i + 1);
+            pthread_mutex_unlock(&g_lock);
+            return CKR_OK;
+        }
+    }
     pthread_mutex_unlock(&g_lock);
-    return CKR_OK;
+    return CKR_SESSION_COUNT;
 }
 
 CK_RV C_CloseSession(CK_SESSION_HANDLE h) {
-    (void)h;
+    TRACE("C_CloseSession");
     pthread_mutex_lock(&g_lock);
-    g_session_open = 0; g_find_active = 0; g_sign_active = 0;
+    session_t *ss = get_session(h);
+    if (ss) { ss->open = 0; ss->find_active = 0; if (g_session_open) g_session_open--; }
+    pthread_mutex_unlock(&g_lock);
+    return ss ? CKR_OK : CKR_SESSION_HANDLE_INVALID;
+}
+
+CK_RV C_CloseAllSessions(CK_SLOT_ID slotID) {
+    TRACE("C_CloseAllSessions");
+    if (slotID != SLOT_ID) return CKR_SLOT_ID_INVALID;
+    pthread_mutex_lock(&g_lock);
+    memset(g_sessions, 0, sizeof g_sessions); g_session_open = 0; g_sign_active = 0;
     pthread_mutex_unlock(&g_lock);
     return CKR_OK;
 }
 
-CK_RV C_CloseAllSessions(CK_SLOT_ID slotID) { (void)slotID; return C_CloseSession(0); }
-
 CK_RV C_GetSessionInfo(CK_SESSION_HANDLE h, CK_SESSION_INFO_PTR p) {
-    (void)h;
+    TRACE("C_GetSessionInfo");
     if (!p) return CKR_ARGUMENTS_BAD;
+    pthread_mutex_lock(&g_lock);
+    session_t *ss = get_session(h);
+    pthread_mutex_unlock(&g_lock);
+    if (!ss) return CKR_SESSION_HANDLE_INVALID;
     p->slotID = SLOT_ID;
     p->state = CKS_RO_USER_FUNCTIONS;
     p->flags = CKF_SERIAL_SESSION;
@@ -398,124 +455,153 @@ CK_RV C_GetSessionInfo(CK_SESSION_HANDLE h, CK_SESSION_INFO_PTR p) {
 }
 
 CK_RV C_Login(CK_SESSION_HANDLE h, CK_USER_TYPE t, CK_UTF8CHAR_PTR pin, CK_ULONG len) {
+    TRACE("C_Login");
     (void)h; (void)t; (void)pin; (void)len;
     return CKR_OK;  /* auth happens out-of-band (agent holds the OAuth session) */
 }
-CK_RV C_Logout(CK_SESSION_HANDLE h) { (void)h; return CKR_OK; }
+CK_RV C_Logout(CK_SESSION_HANDLE h) {
+    TRACE("C_Logout"); (void)h; return CKR_OK; }
+
+/* Value of attribute `type` for object (cls, idx). Returns 1 and sets val and len if the
+ * object has it, 0 otherwise. Scalars are written into `scratch` (>= 16 bytes). */
+static int obj_attr(unsigned cls, uint32_t idx, CK_ATTRIBUTE_TYPE type,
+                    const void **val, CK_ULONG *len, unsigned char *scratch) {
+    identity_t *d = &g_ids[idx];
+#define SCALAR(T, v) do { T _t = (v); memcpy(scratch, &_t, sizeof _t); \
+                          *val = scratch; *len = sizeof _t; return 1; } while (0)
+#define BUF(p, n) do { *val = (p); *len = (n); return 1; } while (0)
+    switch (type) {
+    case CKA_CLASS:
+        SCALAR(CK_OBJECT_CLASS, cls == CLS_CERT ? CKO_CERTIFICATE :
+                                cls == CLS_PRIV ? CKO_PRIVATE_KEY : CKO_PUBLIC_KEY);
+    case CKA_TOKEN: SCALAR(CK_BBOOL, CK_TRUE);
+    case CKA_PRIVATE: SCALAR(CK_BBOOL, cls == CLS_PRIV ? CK_TRUE : CK_FALSE);
+    case CKA_MODIFIABLE: SCALAR(CK_BBOOL, CK_FALSE);
+    case CKA_LABEL: BUF(d->label, d->label_len);
+    case CKA_ID: BUF(d->id, d->id_len);
+    default: break;
+    }
+    if (cls == CLS_CERT) {
+        switch (type) {
+        case CKA_CERTIFICATE_TYPE: SCALAR(CK_CERTIFICATE_TYPE, CKC_X_509);
+        case CKA_VALUE: BUF(d->cert, d->cert_len);
+        case CKA_SUBJECT: BUF(d->subject, d->subject_len);
+        case CKA_ISSUER: BUF(d->issuer, d->issuer_len);
+        case CKA_SERIAL_NUMBER: BUF(d->serial, d->serial_len);
+        case CKA_TRUSTED: SCALAR(CK_BBOOL, CK_FALSE);
+        case CKA_CERTIFICATE_CATEGORY: SCALAR(CK_ULONG, 1); /* token user */
+        default: return 0;
+        }
+    }
+    switch (type) {  /* private or public key */
+    case CKA_KEY_TYPE: SCALAR(CK_KEY_TYPE, CKK_RSA);
+    case CKA_SIGN: SCALAR(CK_BBOOL, cls == CLS_PRIV ? CK_TRUE : CK_FALSE);
+    case CKA_VERIFY: SCALAR(CK_BBOOL, cls == CLS_PUB ? CK_TRUE : CK_FALSE);
+    case CKA_SIGN_RECOVER: case CKA_VERIFY_RECOVER: case CKA_ENCRYPT: case CKA_WRAP:
+    case CKA_DECRYPT: case CKA_UNWRAP: case CKA_DERIVE: SCALAR(CK_BBOOL, CK_FALSE);
+    case CKA_SENSITIVE: case CKA_ALWAYS_SENSITIVE:
+        SCALAR(CK_BBOOL, cls == CLS_PRIV ? CK_TRUE : CK_FALSE);
+    case CKA_EXTRACTABLE: SCALAR(CK_BBOOL, CK_FALSE);
+    case CKA_NEVER_EXTRACTABLE: SCALAR(CK_BBOOL, cls == CLS_PRIV ? CK_TRUE : CK_FALSE);
+    case CKA_LOCAL: SCALAR(CK_BBOOL, CK_FALSE);
+    case CKA_MODULUS: BUF(d->modulus, d->modulus_len);
+    case CKA_PUBLIC_EXPONENT: BUF(d->exponent, d->exponent_len);
+    case CKA_MODULUS_BITS: SCALAR(CK_ULONG, d->modulus_bits);
+    case CKA_SUBJECT: BUF(d->subject, d->subject_len);
+    case CKA_ALWAYS_AUTHENTICATE:
+        if (cls == CLS_PRIV) SCALAR(CK_BBOOL, CK_FALSE);
+        return 0;
+    default: return 0;
+    }
+#undef SCALAR
+#undef BUF
+}
+
+
+static int matches(unsigned cls, uint32_t idx, CK_ATTRIBUTE_PTR t, CK_ULONG n) {
+    unsigned char scratch[16];
+    for (CK_ULONG i = 0; i < n; i++) {
+        const void *v; CK_ULONG l;
+        if (!obj_attr(cls, idx, t[i].type, &v, &l, scratch)) return 0;
+        if (!t[i].pValue || t[i].ulValueLen != l || memcmp(t[i].pValue, v, l) != 0) return 0;
+    }
+    return 1;
+}
 
 CK_RV C_FindObjectsInit(CK_SESSION_HANDLE h, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG count) {
-    (void)h;
+    TRACE("C_FindObjectsInit");
     pthread_mutex_lock(&g_lock);
+    session_t *ss = get_session(h);
+    if (!ss) { pthread_mutex_unlock(&g_lock); return CKR_SESSION_HANDLE_INVALID; }
+    if (ss->find_active) { pthread_mutex_unlock(&g_lock); return CKR_OPERATION_ACTIVE; }
     if (!g_objects_loaded) load_identities();  /* best-effort; empty list if agent down */
-
-    /* parse template filters we care about: CKA_CLASS and CKA_ID */
-    int want_class = -1; CK_OBJECT_CLASS cls = 0;
-    const unsigned char *want_id = NULL; CK_ULONG want_id_len = 0;
-    for (CK_ULONG i = 0; i < count; i++) {
-        if (pTemplate[i].type == CKA_CLASS && pTemplate[i].pValue) {
-            cls = *(CK_OBJECT_CLASS *)pTemplate[i].pValue; want_class = 1;
-        } else if (pTemplate[i].type == CKA_ID && pTemplate[i].pValue) {
-            want_id = pTemplate[i].pValue; want_id_len = pTemplate[i].ulValueLen;
-        }
-    }
-
-    g_find_count = 0; g_find_pos = 0;
-    for (uint32_t i = 0; i < g_nids; i++) {
-        if (want_id) {
-            if (want_id_len != g_ids[i].id_len || memcmp(want_id, g_ids[i].id, want_id_len) != 0)
-                continue;
-        }
-        int add_cert = 1, add_priv = 1, add_pub = 1;
-        if (want_class == 1) {
-            add_cert = (cls == CKO_CERTIFICATE);
-            add_priv = (cls == CKO_PRIVATE_KEY);
-            add_pub = (cls == CKO_PUBLIC_KEY);
-        }
-        if (add_cert) g_find_results[g_find_count++] = H_MAKE(CLS_CERT, i);
-        if (add_priv) g_find_results[g_find_count++] = H_MAKE(CLS_PRIV, i);
-        if (add_pub) g_find_results[g_find_count++] = H_MAKE(CLS_PUB, i);
-    }
-    g_find_active = 1;
+    ss->count = ss->pos = 0;
+    static const unsigned classes[3] = {CLS_CERT, CLS_PRIV, CLS_PUB};
+    for (uint32_t i = 0; i < g_nids; i++)
+        for (int c = 0; c < 3; c++)
+            if (matches(classes[c], i, pTemplate, count))
+                ss->results[ss->count++] = H_MAKE(classes[c], i);
+    ss->find_active = 1;
+    TRACE("  FindObjectsInit tmpl_count=%lu -> %u results (nids=%u)",
+          (unsigned long)count, ss->count, g_nids);
     pthread_mutex_unlock(&g_lock);
     return CKR_OK;
 }
 
 CK_RV C_FindObjects(CK_SESSION_HANDLE h, CK_OBJECT_HANDLE_PTR ph, CK_ULONG maxc, CK_ULONG_PTR pn) {
-    (void)h;
-    if (!g_find_active) return CKR_OPERATION_NOT_INITIALIZED;
-    CK_ULONG n = 0;
-    while (g_find_pos < g_find_count && n < maxc) ph[n++] = g_find_results[g_find_pos++];
-    *pn = n;
-    return CKR_OK;
+    TRACE("C_FindObjects");
+    if (!ph || !pn) return CKR_ARGUMENTS_BAD;
+    pthread_mutex_lock(&g_lock);
+    session_t *ss = get_session(h);
+    CK_RV rv = CKR_OK;
+    if (!ss) rv = CKR_SESSION_HANDLE_INVALID;
+    else if (!ss->find_active) rv = CKR_OPERATION_NOT_INITIALIZED;
+    else {
+        CK_ULONG n = 0;
+        while (ss->pos < ss->count && n < maxc) ph[n++] = ss->results[ss->pos++];
+        *pn = n;
+    }
+    pthread_mutex_unlock(&g_lock);
+    return rv;
 }
 
-CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE h) { (void)h; g_find_active = 0; return CKR_OK; }
+CK_RV C_FindObjectsFinal(CK_SESSION_HANDLE h) {
+    TRACE("C_FindObjectsFinal");
+    pthread_mutex_lock(&g_lock);
+    session_t *ss = get_session(h);
+    if (ss) ss->find_active = 0;
+    pthread_mutex_unlock(&g_lock);
+    return ss ? CKR_OK : CKR_SESSION_HANDLE_INVALID;
+}
 
 CK_RV C_GetAttributeValue(CK_SESSION_HANDLE h, CK_OBJECT_HANDLE obj,
                           CK_ATTRIBUTE_PTR pTemplate, CK_ULONG count) {
+    TRACE("C_GetAttributeValue");
     (void)h;
+    pthread_mutex_lock(&g_lock);
     uint32_t idx = H_INDEX(obj); unsigned cls = H_CLASS(obj);
-    if (idx >= g_nids) return CKR_OBJECT_HANDLE_INVALID;
-    identity_t *d = &g_ids[idx];
+    if (idx >= g_nids || cls < CLS_CERT || cls > CLS_PUB) {
+        pthread_mutex_unlock(&g_lock);
+        return CKR_OBJECT_HANDLE_INVALID;
+    }
     CK_RV rv = CKR_OK;
-    CK_BBOOL ck_true = CK_TRUE, ck_false = CK_FALSE;
-    CK_OBJECT_CLASS oc = cls == CLS_CERT ? CKO_CERTIFICATE :
-                         cls == CLS_PRIV ? CKO_PRIVATE_KEY : CKO_PUBLIC_KEY;
-    CK_KEY_TYPE kt = CKK_RSA;
-    CK_CERTIFICATE_TYPE ctype = CKC_X_509;
-
+    unsigned char scratch[16];
     for (CK_ULONG i = 0; i < count; i++) {
-        CK_ATTRIBUTE *a = &pTemplate[i];
-        CK_RV r = CKR_OK;
-        switch (a->type) {
-        case CKA_CLASS: r = set_attr(a, &oc, sizeof oc); break;
-        case CKA_TOKEN: r = set_attr(a, &ck_true, sizeof ck_true); break;
-        case CKA_PRIVATE:
-            r = set_attr(a, cls == CLS_PRIV ? &ck_true : &ck_false, sizeof ck_true); break;
-        case CKA_MODIFIABLE: r = set_attr(a, &ck_false, sizeof ck_false); break;
-        case CKA_LABEL: r = set_attr(a, d->label, d->label_len); break;
-        case CKA_ID: r = set_attr(a, d->id, d->id_len); break;
-        default:
-            if (cls == CLS_CERT) {
-                switch (a->type) {
-                case CKA_CERTIFICATE_TYPE: r = set_attr(a, &ctype, sizeof ctype); break;
-                case CKA_VALUE: r = set_attr(a, d->cert, d->cert_len); break;
-                case CKA_SUBJECT: r = set_attr(a, d->subject, d->subject_len); break;
-                case CKA_ISSUER: r = set_attr(a, d->issuer, d->issuer_len); break;
-                case CKA_SERIAL_NUMBER: r = set_attr(a, d->serial, d->serial_len); break;
-                case CKA_TRUSTED: r = set_attr(a, &ck_false, sizeof ck_false); break;
-                default: a->ulValueLen = (CK_ULONG)-1; r = CKR_ATTRIBUTE_TYPE_INVALID;
-                }
-            } else {  /* private or public key */
-                switch (a->type) {
-                case CKA_KEY_TYPE: r = set_attr(a, &kt, sizeof kt); break;
-                case CKA_SIGN:
-                    r = set_attr(a, cls == CLS_PRIV ? &ck_true : &ck_false, sizeof ck_true); break;
-                case CKA_VERIFY:
-                    r = set_attr(a, cls == CLS_PUB ? &ck_true : &ck_false, sizeof ck_true); break;
-                case CKA_DECRYPT: case CKA_UNWRAP: case CKA_DERIVE:
-                    r = set_attr(a, &ck_false, sizeof ck_false); break;
-                case CKA_SENSITIVE: case CKA_ALWAYS_SENSITIVE:
-                    r = set_attr(a, cls == CLS_PRIV ? &ck_true : &ck_false, sizeof ck_true); break;
-                case CKA_EXTRACTABLE: r = set_attr(a, &ck_false, sizeof ck_false); break;
-                case CKA_NEVER_EXTRACTABLE: r = set_attr(a, &ck_true, sizeof ck_true); break;
-                case CKA_MODULUS: r = set_attr(a, d->modulus, d->modulus_len); break;
-                case CKA_PUBLIC_EXPONENT: r = set_attr(a, d->exponent, d->exponent_len); break;
-                case CKA_MODULUS_BITS: {
-                    CK_ULONG mb = d->modulus_bits; r = set_attr(a, &mb, sizeof mb); break;
-                }
-                case CKA_SUBJECT: r = set_attr(a, d->subject, d->subject_len); break;
-                case CKA_ALWAYS_AUTHENTICATE: r = set_attr(a, &ck_false, sizeof ck_false); break;
-                default: a->ulValueLen = (CK_ULONG)-1; r = CKR_ATTRIBUTE_TYPE_INVALID;
-                }
-            }
+        const void *v; CK_ULONG l;
+        CK_RV r;
+        if (!obj_attr(cls, idx, pTemplate[i].type, &v, &l, scratch)) {
+            pTemplate[i].ulValueLen = (CK_ULONG)-1; r = CKR_ATTRIBUTE_TYPE_INVALID;
+        } else {
+            r = set_attr(&pTemplate[i], v, l);
         }
         if (r != CKR_OK) rv = r;
     }
+    pthread_mutex_unlock(&g_lock);
     return rv;
 }
 
 CK_RV C_SignInit(CK_SESSION_HANDLE h, CK_MECHANISM_PTR pMech, CK_OBJECT_HANDLE key) {
+    TRACE("C_SignInit");
     (void)h;
     if (!pMech) return CKR_ARGUMENTS_BAD;
     if (!mech_name(pMech->mechanism)) return CKR_MECHANISM_INVALID;
@@ -569,6 +655,7 @@ static CK_RV do_sign(CK_BYTE_PTR pData, CK_ULONG dataLen,
 
 CK_RV C_Sign(CK_SESSION_HANDLE h, CK_BYTE_PTR pData, CK_ULONG dataLen,
              CK_BYTE_PTR pSig, CK_ULONG_PTR pSigLen) {
+    TRACE("C_Sign");
     (void)h;
     if (!g_sign_active) return CKR_OPERATION_NOT_INITIALIZED;
     CK_RV rv = do_sign(pData, dataLen, pSig, pSigLen);
@@ -577,12 +664,14 @@ CK_RV C_Sign(CK_SESSION_HANDLE h, CK_BYTE_PTR pData, CK_ULONG dataLen,
 }
 
 CK_RV C_SignUpdate(CK_SESSION_HANDLE h, CK_BYTE_PTR pPart, CK_ULONG partLen) {
+    TRACE("C_SignUpdate");
     (void)h;
     if (!g_sign_active) return CKR_OPERATION_NOT_INITIALIZED;
     return sign_buf_append(pPart, partLen) == 0 ? CKR_OK : CKR_HOST_MEMORY;
 }
 
 CK_RV C_SignFinal(CK_SESSION_HANDLE h, CK_BYTE_PTR pSig, CK_ULONG_PTR pSigLen) {
+    TRACE("C_SignFinal");
     (void)h;
     if (!g_sign_active) return CKR_OPERATION_NOT_INITIALIZED;
     CK_RV rv = do_sign(g_sign_buf, g_sign_buf_len, pSig, pSigLen);
@@ -674,6 +763,7 @@ static CK_FUNCTION_LIST g_function_list = {
 };
 
 CK_RV C_GetFunctionList(CK_FUNCTION_LIST_PTR_PTR ppFunctionList) {
+    TRACE("C_GetFunctionList");
     if (!ppFunctionList) return CKR_ARGUMENTS_BAD;
     *ppFunctionList = &g_function_list;
     return CKR_OK;

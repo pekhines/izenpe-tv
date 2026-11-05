@@ -78,6 +78,29 @@ def main() -> int:
         certs, keys = find(CKO_CERTIFICATE), find(CKO_PRIVATE_KEY)
         assert certs and keys, "no objects enumerated"
 
+        # Regression: every template attribute must match. NSS looks up issuers by
+        # CKA_SUBJECT and keys by CKA_ID for each root CA; answering those with our
+        # objects made Firefox hang (it believed every root had a private key here).
+        def find_tmpl(attrs):
+            t = (CK_ATTRIBUTE * len(attrs))()
+            keep = []
+            for i, (typ, val) in enumerate(attrs):
+                b = (C.c_ubyte * len(val)).from_buffer_copy(val)
+                keep.append(b)
+                t[i].type, t[i].pValue, t[i].ulValueLen = typ, C.cast(b, C.c_void_p), len(val)
+            ck(lib.C_FindObjectsInit(sess, t, len(attrs)), "FindInit tmpl")
+            h = (CK_ULONG * 16)()
+            cnt = CK_ULONG(0)
+            ck(lib.C_FindObjects(sess, h, 16, C.byref(cnt)), "Find tmpl")
+            ck(lib.C_FindObjectsFinal(sess), "FindFinal tmpl")
+            return cnt.value
+        cls_cert = bytes(CK_ULONG(CKO_CERTIFICATE))
+        cls_priv = bytes(CK_ULONG(CKO_PRIVATE_KEY))
+        CKA_SUBJECT = 0x101
+        assert find_tmpl([(CKA_CLASS, cls_cert), (CKA_SUBJECT, b"\x30\x00")]) == 0
+        assert find_tmpl([(CKA_CLASS, cls_priv), (CKA_ID, b"\x00" * 20)]) == 0
+        assert find_tmpl([(CKA_CLASS, 0xCE534353 .to_bytes(C.sizeof(CK_ULONG), "little"))]) == 0
+
         def getval(h, typ):
             a = (CK_ATTRIBUTE * 1)()
             a[0].type = typ
@@ -88,6 +111,8 @@ def main() -> int:
             return bytes(buf[:a[0].ulValueLen])
 
         der = getval(certs[0], CKA_VALUE)
+        kid = getval(keys[0], CKA_ID)
+        assert find_tmpl([(CKA_CLASS, cls_priv), (CKA_ID, kid)]) == 1
         msg = b"izenpe pkcs11 smoke test"
         mech = CK_MECHANISM(CKM_SHA256_RSA_PKCS, None, 0)
         ck(lib.C_SignInit(sess, C.byref(mech), keys[0]), "SignInit")
