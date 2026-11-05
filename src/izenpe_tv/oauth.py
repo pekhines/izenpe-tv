@@ -86,9 +86,12 @@ def build_authorize_url(
     ]
     if login_hint:
         parts.append(f"login_hint={enc(login_hint)}")
+    merged = dict(config.DEFAULT_APP_PARAMS)
+    if app_params:
+        merged.update({k: v for k, v in app_params.items() if v is not None})
     for k in ("app_version", "app_platform", "app_arch"):
-        if app_params and app_params.get(k) is not None:
-            parts.append(f"{k}={enc(str(app_params[k]))}")
+        if merged.get(k) is not None:
+            parts.append(f"{k}={enc(str(merged[k]))}")
     return f"{env.base_url}{config.PATH_AUTHORIZE}?" + "&".join(parts), state
 
 

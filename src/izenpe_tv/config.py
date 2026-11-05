@@ -26,6 +26,16 @@ SCOPE = (
 
 REDIRECT_URI = "oauth-swift://oauth-callback"
 
+# The official app always appends these three params (added in native code); the
+# authorize request is rejected without them. Values mimic the Windows client v4.0.9
+# (app_version = the exe's ProductVersion resource). Override per-call if needed.
+DEFAULT_APP_PARAMS = {
+    "app_version": "4.0.9+400101",
+    "app_platform": "windows",
+    "app_arch": "x64",
+}
+OAUTH_PROFILE = "vsc2026"  # active profile in the official client (vs "legacy")
+
 # API resource paths (relative to the environment base URL)
 PATH_AUTHORIZE = "/trustedx-authserver/oauth/izenpe"
 PATH_TOKEN = "/trustedx-authserver/oauth/izenpe/token"
