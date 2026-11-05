@@ -88,8 +88,11 @@ class ApiClient:
     def certificate_der(self, identity_id: str) -> bytes:
         """Return the identity's X.509 certificate as DER bytes."""
         d = self.identity_detail(identity_id)
-        b64 = (d.get("certificate") or d.get("certificate_b64")
-               or d.get("identity", {}).get("certificate"))
+        ident = d.get("identity", {}) if isinstance(d.get("identity"), dict) else {}
+        # real shape: {"identity": {..., "details": {"certificate": b64, "public_key": ...}}}
+        b64 = (ident.get("details", {}).get("certificate")
+               or ident.get("certificate")
+               or d.get("certificate") or d.get("certificate_b64"))
         if not b64:
             raise ApiError(f"no certificate in identity detail: keys={list(d)}")
         return base64.b64decode(b64)
@@ -105,7 +108,8 @@ class ApiClient:
 
         # Decide whether we are sending a raw hash (digest_value) or DigestInfo (data).
         hash_alg = _RAW_LEN.get(len(digest))
-        if hash_alg and not pss:
+        if hash_alg:
+            # raw hash (PKCS#1 v1.5 or PSS): the bridge always uses digest_value
             body["digest_value"] = base64.b64encode(digest).decode()
             alg = f"rsa-{hash_alg}"
         else:
@@ -120,6 +124,10 @@ class ApiClient:
                         headers=self._headers({"Content-Type": "application/json"}), timeout=60)
         if r.status_code not in (200, 201):
             raise ApiError(f"sign → HTTP {r.status_code}: {r.text[:300]}")
+        # Izenpe returns the raw signature bytes (application/octet-stream).
+        ctype = (r.headers.get("Content-Type") or "").lower()
+        if "json" not in ctype:
+            return r.content
         return _decode_signature(r.json())
 
 

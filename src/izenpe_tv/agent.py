@@ -295,8 +295,12 @@ def _handle_binary(conn, backend: Backend):
             else:
                 conn.sendall(b"\x01")
         except Exception as e:  # noqa: BLE001
+            print(f"izenpe-tv-agent: op {op} failed: {type(e).__name__}: {e}", flush=True)
             msg = f"{type(e).__name__}: {e}".encode()
-            conn.sendall(b"\x01" + struct.pack(">I", len(msg)) + msg)
+            try:
+                conn.sendall(b"\x01" + struct.pack(">I", len(msg)) + msg)
+            except OSError:
+                pass
 
 
 def _handle(conn, backend: Backend):

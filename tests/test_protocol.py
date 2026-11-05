@@ -50,6 +50,7 @@ def test_sign_raw_body_uses_digest_value_for_raw_sha256():
 
     class FakeResp:
         status_code = 200
+        headers = {"Content-Type": "application/json"}
         def json(self):
             return {"signature": base64.b64encode(b"SIG").decode()}
 
@@ -74,3 +75,18 @@ def test_decode_signature_variants():
     assert api._decode_signature(base64.b64encode(b"A").decode()) == b"A"
     assert api._decode_signature({"bytes": [65, 66]}) == b"AB"
     assert api._decode_signature({"signature": base64.b64encode(b"C").decode()}) == b"C"
+
+
+def test_sign_raw_octet_stream_response():
+    class FakeResp:
+        status_code = 200
+        headers = {"Content-Type": "application/octet-stream"}
+        content = b"\x01" * 256
+
+    class FakeSession:
+        def post(self, url, json=None, headers=None, timeout=None):
+            return FakeResp()
+
+    env = config.ENVIRONMENTS["profesional"]
+    c = api.ApiClient(env, "tok", session=FakeSession())
+    assert c.sign_raw("id", hashlib.sha256(b"x").digest()) == b"\x01" * 256

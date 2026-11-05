@@ -549,6 +549,13 @@ static int sign_buf_append(const unsigned char *p, CK_ULONG n) {
 
 static CK_RV do_sign(CK_BYTE_PTR pData, CK_ULONG dataLen,
                      CK_BYTE_PTR pSig, CK_ULONG_PTR pSigLen) {
+    /* Size query / short buffer: answer from the RSA modulus length WITHOUT contacting
+     * the HSM (each remote call is a real signature). */
+    CK_ULONG need = (g_ids[g_sign_key_idx].modulus_bits + 7) / 8;
+    if (need == 0) need = g_ids[g_sign_key_idx].modulus_len;
+    if (pSig == NULL_PTR) { *pSigLen = need; return CKR_OK; }
+    if (*pSigLen < need) { *pSigLen = need; return CKR_BUFFER_TOO_SMALL; }
+
     const char *hint = NULL;
     if (g_sign_mech == CKM_RSA_PKCS_PSS) hint = pss_hash_name(g_pss_hash);
     uint32_t sl = 0;
