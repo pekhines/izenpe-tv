@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+*.log
+.izenpe-tv/
+*.msi
+*.dmg
+reversing/
+client.toml
