@@ -85,8 +85,8 @@ static int agent_connect(void) {
     char buf[256];
     if (!path || !*path) {
         const char *run = getenv("XDG_RUNTIME_DIR");
-        if (run && *run) snprintf(buf, sizeof buf, "%s/izenpe-tv.sock", run);
-        else snprintf(buf, sizeof buf, "/run/user/%d/izenpe-tv.sock", (int)getuid());
+        if (run && *run) snprintf(buf, sizeof buf, "%s/izenpe-tv/agent.sock", run);
+        else snprintf(buf, sizeof buf, "/run/user/%d/izenpe-tv/agent.sock", (int)getuid());
         path = buf;
     }
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);

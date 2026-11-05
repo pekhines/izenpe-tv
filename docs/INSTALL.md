@@ -37,7 +37,7 @@ izenpe-tv --env profesional login --dni <YOUR_DNI>   # browser: password + SMS
 izenpe-tv-agent --env profesional                    # keep running (or use the systemd unit)
 ```
 
-The agent listens on `$XDG_RUNTIME_DIR/izenpe-tv.sock`.
+The agent listens on `$XDG_RUNTIME_DIR/izenpe-tv/agent.sock`.
 
 ### systemd user service (optional)
 
@@ -49,6 +49,14 @@ systemctl --user enable --now izenpe-tv-agent
 ```
 
 ## 4. Register the module in applications
+
+### Flatpak Firefox / Thunderbird
+The sandbox must see the module and the agent socket directory:
+```bash
+flatpak override --user --filesystem=~/.local/lib/izenpe-tv:ro \
+                        --filesystem=xdg-run/izenpe-tv org.mozilla.firefox
+```
+Restart Firefox afterwards. (Same for `org.mozilla.thunderbird_esr`.)
 
 ### Firefox / Thunderbird (NSS)
 Settings → Privacy & Security → Security Devices → **Load**:

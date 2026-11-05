@@ -33,11 +33,16 @@ SOCKET_ENV = "IZENPE_TV_SOCK"
 
 
 def default_socket_path() -> str:
+    """$XDG_RUNTIME_DIR/izenpe-tv/agent.sock — a directory, so sandboxes (flatpak
+    Firefox: --filesystem=xdg-run/izenpe-tv) keep seeing it when the agent restarts."""
+    if os.environ.get(SOCKET_ENV):
+        return os.environ[SOCKET_ENV]
     run = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     if not os.path.isdir(run):
         run = os.path.expanduser("~/.cache")
-        os.makedirs(run, exist_ok=True)
-    return os.environ.get(SOCKET_ENV, os.path.join(run, "izenpe-tv.sock"))
+    d = os.path.join(run, "izenpe-tv")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return os.path.join(d, "agent.sock")
 
 
 # ---------------------------------------------------------------- object model
