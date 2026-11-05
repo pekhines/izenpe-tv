@@ -56,24 +56,40 @@ def build_authorize_url(
     ui_locales: str = "eu",
     login_hint: str | None = None,
     client_id: str | None = None,
+    app_params: dict | None = None,
 ) -> tuple[str, str]:
-    """Return (authorize_url, state). Open this in the user's browser."""
+    """Return (authorize_url, state), built to match the official app exactly.
+
+    Encoding notes recovered from the Windows client:
+      * parameter order: client_id, response_type, redirect_uri, scope, acr_values,
+        state, ui_locales, login_hint, (app_version, app_platform, app_arch)
+      * scope's three URNs are joined with '+'; every URN is fully %-encoded (':' -> %3A)
+      * acr_values is one fully %-encoded string ('|' -> %7C)
+    We omit the telemetry app_* params by default (the server rejected app_platform=linux
+    with "invalid request"); pass `app_params` to include them if ever needed.
+    """
     state = state or secrets.token_urlsafe(16)
-    params = {
-        "client_id": client_id or env.client_id,
-        "response_type": "code",
-        "redirect_uri": config.REDIRECT_URI,
-        "scope": config.SCOPE,
-        "acr_values": env.acr_values,
-        "state": state,
-        "ui_locales": ui_locales,
-        "app_platform": "linux",
-    }
+    q = urlparse.quote
+
+    def enc(v: str) -> str:
+        return q(v, safe="")
+
+    scope_val = "+".join(enc(s) for s in config.SCOPE.split())
+    parts = [
+        f"client_id={enc(client_id or env.client_id)}",
+        "response_type=code",
+        f"redirect_uri={enc(config.REDIRECT_URI)}",
+        f"scope={scope_val}",
+        f"acr_values={enc(env.acr_values)}",
+        f"state={enc(state)}",
+        f"ui_locales={enc(ui_locales)}",
+    ]
     if login_hint:
-        params["login_hint"] = login_hint
-    # quote scope spaces as %20; TrustedX accepts standard form-urlencoding
-    query = urlparse.urlencode(params, quote_via=urlparse.quote)
-    return f"{env.base_url}{config.PATH_AUTHORIZE}?{query}", state
+        parts.append(f"login_hint={enc(login_hint)}")
+    for k in ("app_version", "app_platform", "app_arch"):
+        if app_params and app_params.get(k) is not None:
+            parts.append(f"{k}={enc(str(app_params[k]))}")
+    return f"{env.base_url}{config.PATH_AUTHORIZE}?" + "&".join(parts), state
 
 
 def parse_redirect(redirect: str, *, expected_state: str | None = None) -> str:
