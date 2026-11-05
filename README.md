@@ -25,6 +25,17 @@ LibreOffice and Thunderbird see the certificate like a smartcard.
 pip install -e .           # requests + cryptography; optional: pip install -e '.[keyring]'
 ```
 
+## One-click: `izenpelogin`
+
+```bash
+packaging/install-izenpelogin.sh [icon.png]   # menu entry + desktop icon + ~/.local/bin/izenpelogin
+```
+
+Clicking **izenpelogin** starts the agent if needed, opens the Izenpe login window
+(you type DNI/NIE, password and the SMS code), checks the certificate is reachable and
+shows a notification with the time the session stays active. A reminder pops up five
+minutes before it expires. Log: `~/.cache/izenpe-tv/izenpelogin.log`.
+
 ## Usage
 
 ```bash

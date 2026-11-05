@@ -17,6 +17,7 @@ webview = ["PyQt6>=6.6", "PyQt6-WebEngine>=6.6"]
 izenpe-tv = "izenpe_tv.cli:main"
 izenpe-tv-agent = "izenpe_tv.agent:main"
 izenpe-tv-callback = "izenpe_tv.callback:main"
+izenpelogin = "izenpe_tv.launcher:main"
 
 [build-system]
 requires = ["setuptools>=68"]
